@@ -1,8 +1,0 @@
-{
-    "MySqlConfig": {
-        "Server" : "192.168.1.50",
-        "Database" :"Nexus",
-        "Uid" : "nex_dbo",
-        "Pwd" : "NexusDbo2026^"
-    }
-}

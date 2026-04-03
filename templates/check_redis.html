@@ -1,0 +1,269 @@
+{% extends "base.html" %}
+
+{% block title %}检查Redis - sc_nex{% endblock %}
+
+{% block extra_head %}
+<!-- DataTables CSS -->
+<link href="{{ url_for('static', filename='css/datatables.min.css') }}" rel="stylesheet">
+{% endblock %}
+
+{% block extra_css %}
+        .json-key { color: #9cdcfe; }
+        .json-val-string { color: #ce9178; }
+        .json-val-number { color: #b5cea8; }
+        .json-val-boolean { color: #569cd6; }
+        .json-val-null { color: #569cd6; font-style: italic; }
+{% endblock %}
+
+{% block content %}
+    <div class="container-fluid px-4">
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="fas fa-server me-2"></i> Redis 数据校验</span>
+                        <button class="btn btn-primary btn-sm" onclick="loadTableData()"><i class="fas fa-sync me-1"></i>刷新状态</button>
+                    </div>
+                    <div class="card-body">
+                        <table id="checkTable" class="table table-striped table-hover dt-responsive nowrap"
+                            style="width:100%">
+                            <thead>
+                                <tr>
+                                    <th>编号</th>
+                                    <th>配置项说明</th>
+                                    <th>更新时间</th>
+                                    <th>同步记录状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Compare Modal -->
+    <div class="modal fade" id="compareModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">双端对比: <span id="compareModalTitleId"></span></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <strong><i class="fas fa-info-circle me-1"></i>配置项说明:</strong>
+                        <div id="compareModalDesc" class="mt-1 p-2 bg-dark rounded border border-secondary text-light"></div>
+                    </div>
+                    <div class="mb-3">
+                        <strong><i class="fas fa-comment-dots me-1"></i>配置参数说明:</strong>
+                        <div id="compareModalParamDesc" class="mt-1 p-2 bg-dark rounded border border-secondary text-light"></div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 border-end">
+                            <h6 class="text-info text-center mb-3"><i class="fas fa-database me-2"></i>本地数据库记录</h6>
+                            <pre class="json-content" id="compareLocalBody" style="background-color: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 5px; margin: 0; font-family: 'Consolas', monospace; white-space: pre-wrap; font-size: 0.9em; height: 500px; overflow-y: auto;"></pre>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-warning text-center mb-3"><i class="fas fa-server me-2"></i>Redis 远程缓存</h6>
+                            <pre class="json-content" id="compareRedisBody" style="background-color: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 5px; margin: 0; font-family: 'Consolas', monospace; white-space: pre-wrap; font-size: 0.9em; height: 500px; overflow-y: auto;"></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let dtTable;
+
+    $(document).ready(function () {
+        initTable();
+        // Set active menu item
+        $('#navbarSysConfig').addClass('active');
+        $('[href="{{ url_for("check_redis") }}"]').addClass('active');
+    });
+
+    function syntaxHighlight(json) {
+        if (typeof json != 'string') {
+             json = JSON.stringify(json, undefined, 4);
+        }
+        json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+            var cls = 'json-val-number';
+            if (/^"/.test(match)) {
+                if (/:$/.test(match)) {
+                    cls = 'json-key';
+                } else {
+                    cls = 'json-val-string';
+                }
+            } else if (/true|false/.test(match)) {
+                cls = 'json-val-boolean';
+            } else if (/null/.test(match)) {
+                cls = 'json-val-null';
+            }
+            return '<span class="' + cls + '">' + match + '</span>';
+        });
+    }
+
+    function initTable() {
+        dtTable = $('#checkTable').DataTable({
+            responsive: true,
+            ordering: false,
+            pageLength: 50,
+            columns: [
+                {
+                    data: 'config_id',
+                    render: function (data, type, row) {
+                        if (data && data.length === 8) {
+                            let formatted = data.substring(0, 1) + ' ' + data.substring(1, 4) + ' ' + data.substring(4, 8);
+                            if (row.in_redis) {
+                                return `<a href="#" onclick='showCompareModal("${data}")' class="text-info text-decoration-none fw-bold"><i class="fas fa-file-code me-1"></i>${formatted}</a>`;
+                            } else {
+                                return `<span class="text-muted"><i class="fas fa-file-code me-1"></i>${formatted}</span>`;
+                            }
+                        }
+                        return data;
+                    }
+                },
+                {
+                    data: 'description',
+                    render: function (data) {
+                        return data.length > 30 ? data.substring(0, 30) + '...' : data;
+                    }
+                },
+                {
+                    data: 'updated_at',
+                    render: function (data) {
+                        if (!data) return '';
+                        let d = new Date(data);
+                        if (isNaN(d.getTime())) return data;
+                        let y, m, day, h, min, s;
+                        if (typeof data === 'string' && data.indexOf('GMT') !== -1) {
+                            y = d.getUTCFullYear(); m = String(d.getUTCMonth() + 1).padStart(2, '0'); day = String(d.getUTCDate()).padStart(2, '0');
+                            h = String(d.getUTCHours()).padStart(2, '0'); min = String(d.getUTCMinutes()).padStart(2, '0'); s = String(d.getUTCSeconds()).padStart(2, '0');
+                        } else {
+                            y = d.getFullYear(); m = String(d.getMonth() + 1).padStart(2, '0'); day = String(d.getDate()).padStart(2, '0');
+                            h = String(d.getHours()).padStart(2, '0'); min = String(d.getMinutes()).padStart(2, '0'); s = String(d.getSeconds()).padStart(2, '0');
+                        }
+                        return y + '-' + m + '-' + day + ' ' + h + ':' + min + ':' + s;
+                    }
+                },
+                {
+                    data: 'in_redis',
+                    render: function (data) {
+                        if (data) {
+                            return `<span class="badge bg-success" style="font-size: 0.9em;"><i class="fas fa-check-circle me-1"></i>已同步到 Redis</span>`;
+                        } else {
+                            return `<span class="badge bg-danger" style="font-size: 0.9em;"><i class="fas fa-times-circle me-1"></i>Redis 中不存在</span>`;
+                        }
+                    }
+                },
+                {
+                    data: null,
+                    render: function (data, type, row) {
+                        return `<button class="btn btn-sm btn-outline-danger" onclick="syncSingleToRedis('${row.config_id}')"><i class="fas fa-level-up-alt"></i> 同步</button>`;
+                    }
+                }
+            ],
+            language: {
+                "processing": "处理中...",
+                "loadingRecords": "载入中...",
+                "lengthMenu": "显示 _MENU_ 项结果",
+                "info": "显示第 _START_ 至 _END_ 项结果，共 _TOTAL_ 项",
+                "infoEmpty": "显示第 0 至 0 项结果，共 0 项",
+                "search": "搜索:",
+                "emptyTable": "表中数据为空",
+                "zeroRecords": "没有匹配结果",
+                "paginate": {
+                    "first": "首页",
+                    "previous": "上页",
+                    "next": "下页",
+                    "last": "末页"
+                }
+            }
+        });
+
+        loadTableData();
+    }
+
+    function loadTableData() {
+        // loading state
+        let btn = $('button:contains("刷新状态")');
+        let origHtml = btn.html();
+        btn.html('<i class="fas fa-spinner fa-spin me-1"></i>刷新中...').prop('disabled', true);
+        
+        $.get('/api/redis/check_all', function (res) {
+            btn.html(origHtml).prop('disabled', false);
+            if (res.success) {
+                dtTable.clear().rows.add(res.data).draw();
+            } else {
+                alert(res.msg);
+            }
+        }).fail(function(err) {
+            btn.html(origHtml).prop('disabled', false);
+            alert(err.responseJSON ? err.responseJSON.msg : "请求失败");
+        });
+    }
+
+    function showCompareModal(config_id) {
+        let formattedId = config_id.substring(0, 1) + ' ' + config_id.substring(1, 4) + ' ' + config_id.substring(4, 8);
+        $('#compareModalTitleId').text(formattedId);
+        
+        $('#compareModalDesc').text('加载中...');
+        $('#compareModalParamDesc').text('加载中...');
+        $('#compareLocalBody').html('<div class="text-center mt-5"><i class="fas fa-spinner fa-spin fa-2x text-muted"></i></div>');
+        $('#compareRedisBody').html('<div class="text-center mt-5"><i class="fas fa-spinner fa-spin fa-2x text-muted"></i></div>');
+        $('#compareModal').modal('show');
+        
+        $.get('/api/redis/compare/' + config_id, function (res) {
+            if (res.success) {
+                $('#compareModalDesc').text(res.desc || '-');
+                $('#compareModalParamDesc').text(res.param_desc || '-');
+                
+                let prettyLocal = syntaxHighlight(JSON.stringify(res.local, null, 4));
+                $('#compareLocalBody').html(prettyLocal);
+                
+                if (res.redis) {
+                    let prettyRedis = syntaxHighlight(JSON.stringify(res.redis, null, 4));
+                    $('#compareRedisBody').html(prettyRedis);
+                } else {
+                    $('#compareRedisBody').html('<div class="text-danger">在 Redis 中未查询到数据 (可能刚被删除或类型不符)</div>');
+                }
+            } else {
+                $('#compareLocalBody').html('<div class="text-danger">' + res.msg + '</div>');
+                $('#compareRedisBody').html('');
+            }
+        }).fail(function(err) {
+            let msg = err.responseJSON ? err.responseJSON.msg : "获取对比数据失败";
+            $('#compareLocalBody').html('<div class="text-danger">' + msg + '</div>');
+            $('#compareRedisBody').html('');
+        });
+    }
+
+    function syncSingleToRedis(config_id) {
+        if (!confirm('确定要将配置项 ' + config_id + ' 刷新同步到 Redis 吗？')) {
+            return;
+        }
+        $.ajax({
+            url: '/api/redis/sync_single/' + config_id,
+            type: 'POST',
+            success: function (res) {
+                if (res.success) {
+                    alert('操作成功: ' + res.msg);
+                    loadTableData(); // Refresh the row state automatically
+                } else {
+                    alert('同步失败: ' + res.msg);
+                }
+            },
+            error: function (err) {
+                alert(err.responseJSON ? err.responseJSON.msg : "同步调用出错。");
+            }
+        });
+    }
+</script>
+{% endblock %}

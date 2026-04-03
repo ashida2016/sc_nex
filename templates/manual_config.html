@@ -1,0 +1,958 @@
+{% extends "base.html" %}
+
+{% block title %}手工配置 - sc_nex{% endblock %}
+
+{% block extra_head %}
+<!-- DataTables CSS -->
+<link href="{{ url_for('static', filename='css/datatables.min.css') }}" rel="stylesheet">
+{% endblock %}
+
+{% block extra_css %}
+        td.details-control {
+            cursor: pointer;
+            color: #3498db;
+        }
+
+        .json-key { color: #9cdcfe; }
+        .json-val-string { color: #ce9178; }
+        .json-val-number { color: #b5cea8; }
+        .json-val-boolean { color: #569cd6; }
+        .json-val-null { color: #569cd6; font-style: italic; }
+{% endblock %}
+
+{% block content %}
+    <div class="container-fluid px-4">
+        <div class="row">
+            <!-- Search Section -->
+            <div class="col-lg-3 col-md-4 mb-4 order-2">
+                <div class="card h-100">
+                    <div class="card-header"><i class="fas fa-search me-2"></i>组合查询</div>
+                    <div class="card-body">
+                        <form id="searchForm">
+                            <div class="mb-3">
+                                <label class="form-label">配置项编号</label>
+                                <input type="text" class="form-control" name="config_id" placeholder="8位编号">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">模糊查询 (说明或内容)</label>
+                                <input type="text" class="form-control" name="keyword" placeholder="输入说明或内容关键字">
+                            </div>
+                            <div class="row mb-3">
+                                <div class="col-6">
+                                    <label class="form-label">配置项大类</label>
+                                    <input type="text" class="form-control" name="category" placeholder="大类 1位">
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label">简称</label>
+                                    <input type="text" class="form-control" name="abbr" placeholder="3位">
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">序号</label>
+                                <input type="text" class="form-control" name="seq" placeholder="4位">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">更新时间范围</label>
+                                <div class="input-group">
+                                    <input type="date" class="form-control" name="update_time_start">
+                                    <span class="input-group-text">至</span>
+                                    <input type="date" class="form-control" name="update_time_end">
+                                </div>
+                            </div>
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-primary"><i
+                                        class="fas fa-search me-2"></i>查询</button>
+                                <button type="reset" class="btn btn-secondary"><i
+                                        class="fas fa-undo me-2"></i>重置</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Table and Charts Section -->
+            <div class="col-lg-9 col-md-8 order-1">
+                <!-- Table Card -->
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="fas fa-list me-2"></i> 配置项列表</span>
+                        <div>
+                            <button class="btn btn-secondary btn-sm text-white me-2" onclick="testPgsqlPool()"><i
+                                    class="fas fa-network-wired me-1"></i>PgSQL Pool 连通测试</button>
+                            <button class="btn btn-info btn-sm text-dark me-2" onclick="updateToMysql()"><i
+                                    class="fas fa-database me-1"></i>MySQL 连通测试</button>
+                            <button class="btn btn-danger btn-sm text-white me-2" onclick="updateToRedis()"><i
+                                    class="fas fa-server me-1"></i>Redis 连通测试</button>
+                            <button class="btn btn-warning btn-sm text-dark me-2" onclick="syncAllToRedis()"><i
+                                    class="fas fa-sync me-1"></i>更新所有到Redis</button>
+                            <button class="btn btn-success btn-sm me-2" onclick="showAddModal()"><i
+                                    class="fas fa-plus me-1"></i>添加配置项</button>
+                            <button class="btn btn-primary btn-sm" onclick="showCopyModal()"><i
+                                    class="fas fa-copy me-1"></i>复制配置项</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <table id="configTable" class="table table-striped table-hover dt-responsive nowrap"
+                            style="width:100%">
+                            <thead>
+                                <tr>
+                                    <th>编号</th>
+                                    <th>配置项说明</th>
+                                    <th>更新时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Copy Config Modal -->
+    <div class="modal fade" id="copyConfigModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-copy me-2"></i>复制配置项</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">请选择要复制的源配置项：</label>
+                        <input class="form-control" list="existingConfigsList" id="copySourceInput" placeholder="直接输入编号或说明进行搜索匹配..." autocomplete="off">
+                        <datalist id="existingConfigsList"></datalist>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="executeCopy()"><i class="fas fa-check me-1"></i>选择并创建副本</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add / Edit Modal -->
+    <div class="modal fade" id="configModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="configModalTitle">配置项</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="configForm">
+                        <input type="hidden" id="editMode" value="0">
+                        <div class="mb-3">
+                            <label class="form-label">配置项编号 (固定8位)</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="configCategory" placeholder="大类: 0-9或大写字母"
+                                    maxlength="1" style="flex: 1;" required>
+                                <span class="input-group-text">-</span>
+                                <input type="text" class="form-control" id="configAbbr" placeholder="简称: 3位字母数字"
+                                    maxlength="3" style="flex: 2;" required>
+                                <span class="input-group-text">-</span>
+                                <input type="text" class="form-control" id="configSeq" placeholder="序号: 4位字母数字"
+                                    maxlength="4" style="flex: 2;" required>
+                            </div>
+                            <div class="form-text text-muted" id="configIdHelp">拼接后格式为: [大类][简称][序号]</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">配置项说明</label>
+                            <textarea class="form-control" id="configDesc" rows="2" required></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">配置参数说明</label>
+                            <textarea class="form-control" id="configParamDesc" rows="2" required></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">配置项内容 (JSON格式)</label>
+                            <textarea class="form-control json-content" id="configContent" rows="6" required></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="btnSaveConfig">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- History Modal -->
+    <div class="modal fade" id="historyModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">历史履历 - <span id="historyConfigId"></span></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <table id="historyTable" class="table table-bordered table-striped" style="width:100%">
+                        <thead>
+                            <tr>
+                                <th>更新时间</th>
+                                <th>配置参数说明</th>
+                                <th>说明</th>
+                                <th>内容 (JSON)</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Content View Modal -->
+    <div class="modal fade" id="contentModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">配置项内容: <span id="contentModalTitleId"></span></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong><i class="fas fa-tag me-1"></i>配置大类:</strong> <span id="contentModalCategory" class="ms-2"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <strong><i class="fas fa-font me-1"></i>配置简称:</strong> <span id="contentModalAbbr" class="ms-2"></span>
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <strong><i class="fas fa-list-ol me-1"></i>配置序号:</strong> <span id="contentModalSeq" class="ms-2"></span>
+                        </div>
+                        <div class="col-md-6">
+                            <strong><i class="fas fa-clock me-1"></i>更新时间:</strong> <span id="contentModalUpdated" class="ms-2"></span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <strong><i class="fas fa-info-circle me-1"></i>配置项说明:</strong>
+                        <div id="contentModalDesc" class="mt-1 p-2 bg-dark rounded border border-secondary text-light"></div>
+                    </div>
+                    <div class="mb-3">
+                        <strong><i class="fas fa-comment-dots me-1"></i>配置参数说明:</strong>
+                        <div id="contentModalParamDesc" class="mt-1 p-2 bg-dark rounded border border-secondary text-light"></div>
+                    </div>
+                    
+                    <strong><i class="fas fa-code me-1"></i>JSON 内容:</strong>
+                    <pre class="json-content mt-2" id="contentModalBody" style="background-color: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 5px; margin: 0; font-family: 'Consolas', monospace; white-space: pre-wrap; font-size: 0.9em;"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Redis Connection Modal -->
+    <div class="modal fade" id="redisConnectionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-server me-2"></i>Redis 连通性测试</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <p class="mb-2">读取到连接字符串：</p>
+                    <div class="alert alert-dark font-monospace mb-0" id="redisConnectionString"></div>
+                    <div id="redisTestResult"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="btnTestRedis"><i class="fas fa-plug me-1"></i>连接测试</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- MySQL Connection Modal -->
+    <div class="modal fade" id="mysqlConnectionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-database me-2"></i>MySQL 连通性测试</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <p class="mb-2">读取到连接字符串：</p>
+                    <div class="alert alert-dark font-monospace mb-0" id="mysqlConnectionString"></div>
+                    <div id="mysqlTestResult"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" id="btnTestMysql"><i class="fas fa-plug me-1"></i>连接测试</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- PgSQL Pool Connection Modal -->
+    <div class="modal fade" id="pgsqlConnectionModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-network-wired me-2"></i>PgSQL Pool (SSTK0100 - SSTK0199)</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="pgsqlPoolResult" class="mb-2"></div>
+                    <table class="table table-bordered table-hover align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>配置编号</th>
+                                <th>配置说明</th>
+                                <th>状态</th>
+                                <th>连接字符串</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pgsqlPoolTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let dtTable;
+    let dtHistory;
+    let currentRedisConfig = null;
+    let currentMysqlConfig = null;
+
+    $(document).ready(function () {
+        initTable();
+
+        $('#searchForm').on('submit', function (e) {
+            e.preventDefault();
+            loadTableData();
+        });
+
+        $('#searchForm').on('reset', function (e) {
+            setTimeout(loadTableData, 100);
+        });
+
+        $('#btnSaveConfig').click(saveConfig);
+
+        $('#btnTestRedis').click(function() {
+            if (!currentRedisConfig) return;
+            
+            const btn = $(this);
+            btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 连接中...');
+            $('#redisTestResult').html('<div class="text-info mt-3"><i class="fas fa-spinner fa-spin me-2"></i>正在尝试连接...</div>');
+            
+            $.ajax({
+                url: '/api/redis/test_connection',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(currentRedisConfig),
+                success: function (res) {
+                    btn.html('<i class="fas fa-check me-1"></i>测试完成');
+                    if (res.success) {
+                        $('#redisTestResult').html(`<div class="alert alert-success mt-3"><i class="fas fa-check-circle me-1"></i>${res.msg}</div>`);
+                    } else {
+                        $('#redisTestResult').html(`<div class="alert alert-danger mt-3"><i class="fas fa-times-circle me-1"></i>${res.msg}</div>`);
+                    }
+                },
+                error: function (err) {
+                    btn.html('<i class="fas fa-exclamation-triangle me-1"></i>重试测试').prop('disabled', false);
+                    let msg = err.responseJSON ? err.responseJSON.msg : "测试请求失败";
+                    $('#redisTestResult').html(`<div class="alert alert-danger mt-3"><i class="fas fa-times-circle me-1"></i>${msg}</div>`);
+                }
+            });
+        });
+
+        $('#btnTestMysql').click(function() {
+            if (!currentMysqlConfig) return;
+            
+            const btn = $(this);
+            btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 连接中...');
+            $('#mysqlTestResult').html('<div class="text-info mt-3"><i class="fas fa-spinner fa-spin me-2"></i>正在尝试连接 MySQL...</div>');
+            
+            $.ajax({
+                url: '/api/mysql/test_connection',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(currentMysqlConfig),
+                success: function (res) {
+                    btn.html('<i class="fas fa-check me-1"></i>测试完成');
+                    if (res.success) {
+                        $('#mysqlTestResult').html(`<div class="alert alert-success mt-3"><i class="fas fa-check-circle me-1"></i>${res.msg}</div>`);
+                    } else {
+                        $('#mysqlTestResult').html(`<div class="alert alert-danger mt-3"><i class="fas fa-times-circle me-1"></i>${res.msg}</div>`);
+                    }
+                },
+                error: function (err) {
+                    btn.html('<i class="fas fa-exclamation-triangle me-1"></i>重试测试').prop('disabled', false);
+                    let msg = err.responseJSON ? err.responseJSON.msg : "MySQL 测试请求失败";
+                    $('#mysqlTestResult').html(`<div class="alert alert-danger mt-3"><i class="fas fa-times-circle me-1"></i>${msg}</div>`);
+                }
+            });
+        });
+
+        // Set active menu item
+        $('#navbarSysConfig').addClass('active');
+        $('[href="{{ url_for("manual_config") }}"]').addClass('active');
+    });
+
+    function syntaxHighlight(json) {
+        if (typeof json != 'string') {
+             json = JSON.stringify(json, undefined, 4);
+        }
+        json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+            var cls = 'json-val-number';
+            if (/^"/.test(match)) {
+                if (/:$/.test(match)) {
+                    cls = 'json-key';
+                } else {
+                    cls = 'json-val-string';
+                }
+            } else if (/true|false/.test(match)) {
+                cls = 'json-val-boolean';
+            } else if (/null/.test(match)) {
+                cls = 'json-val-null';
+            }
+            return '<span class="' + cls + '">' + match + '</span>';
+        });
+    }
+
+    function initTable() {
+        dtTable = $('#configTable').DataTable({
+            responsive: true,
+            ordering: false,
+            pageLength: 50,
+            columns: [
+                {
+                    data: 'config_id',
+                    render: function (data, type, row) {
+                        if (data && data.length === 8) {
+                            let formatted = data.substring(0, 1) + ' ' + data.substring(1, 4) + ' ' + data.substring(4, 8);
+                            return `<a href="#" onclick='showContentModal(${JSON.stringify(row).replace(/'/g, "&apos;")})' class="text-info text-decoration-none fw-bold"><i class="fas fa-file-code me-1"></i>${formatted}</a>`;
+                        }
+                        return data;
+                    }
+                },
+                {
+                    data: 'description',
+                    render: function (data) {
+                        return data.length > 20 ? data.substring(0, 20) + '...' : data;
+                    }
+                },
+                {
+                    data: 'updated_at',
+                    render: function (data) {
+                        if (!data) return '';
+                        let d = new Date(data);
+                        if (isNaN(d.getTime())) return data;
+                        let y, m, day, h, min, s;
+                        if (typeof data === 'string' && data.indexOf('GMT') !== -1) {
+                            y = d.getUTCFullYear(); m = String(d.getUTCMonth() + 1).padStart(2, '0'); day = String(d.getUTCDate()).padStart(2, '0');
+                            h = String(d.getUTCHours()).padStart(2, '0'); min = String(d.getUTCMinutes()).padStart(2, '0'); s = String(d.getUTCSeconds()).padStart(2, '0');
+                        } else {
+                            y = d.getFullYear(); m = String(d.getMonth() + 1).padStart(2, '0'); day = String(d.getDate()).padStart(2, '0');
+                            h = String(d.getHours()).padStart(2, '0'); min = String(d.getMinutes()).padStart(2, '0'); s = String(d.getSeconds()).padStart(2, '0');
+                        }
+                        return y + '-' + m + '-' + day + ' ' + h + ':' + min + ':' + s;
+                    }
+                },
+                {
+                    data: null,
+                    render: function (data, type, row) {
+                        let safeRow = JSON.stringify(row).replace(/'/g, "&apos;");
+                        return `
+                    <button class="btn btn-sm btn-outline-primary me-1 mb-1" onclick='showEditModal(${safeRow})'><i class="fas fa-edit"></i> 修改</button>
+                    <button class="btn btn-sm btn-outline-danger me-1 mb-1" onclick="singleSyncToRedis('${row.config_id}')"><i class="fas fa-level-up-alt"></i> To Redis</button>
+                    <button class="btn btn-sm btn-outline-info me-1 mb-1" onclick="showHistory('${row.config_id}')"><i class="fas fa-history"></i> 履历</button>
+                    <button class="btn btn-sm btn-outline-secondary mb-1" onclick="deleteConfig('${row.config_id}')"><i class="fas fa-trash"></i> 删除</button>
+                `;
+                    }
+                }
+            ],
+            language: {
+                "processing": "处理中...",
+                "loadingRecords": "载入中...",
+                "lengthMenu": "显示 _MENU_ 项结果",
+                "info": "显示第 _START_ 至 _END_ 项结果，共 _TOTAL_ 项",
+                "infoEmpty": "显示第 0 至 0 项结果，共 0 项",
+                "infoFiltered": "(由 _MAX_ 项结果过滤)",
+                "infoPostFix": "",
+                "search": "搜索:",
+                "emptyTable": "表中数据为空",
+                "zeroRecords": "没有匹配结果",
+                "paginate": {
+                    "first": "首页",
+                    "previous": "上页",
+                    "next": "下页",
+                    "last": "末页"
+                }
+            }
+        });
+
+        dtHistory = $('#historyTable').DataTable({
+            responsive: true,
+            ordering: false,
+            columns: [
+                {
+                    data: 'updated_at',
+                    width: "15%",
+                    render: function (data) {
+                        if (!data) return '';
+                        let d = new Date(data);
+                        if (isNaN(d.getTime())) return data;
+                        let y, m, day, h, min, s;
+                        if (typeof data === 'string' && data.indexOf('GMT') !== -1) {
+                            y = d.getUTCFullYear(); m = String(d.getUTCMonth() + 1).padStart(2, '0'); day = String(d.getUTCDate()).padStart(2, '0');
+                            h = String(d.getUTCHours()).padStart(2, '0'); min = String(d.getUTCMinutes()).padStart(2, '0'); s = String(d.getUTCSeconds()).padStart(2, '0');
+                        } else {
+                            y = d.getFullYear(); m = String(d.getMonth() + 1).padStart(2, '0'); day = String(d.getDate()).padStart(2, '0');
+                            h = String(d.getHours()).padStart(2, '0'); min = String(d.getMinutes()).padStart(2, '0'); s = String(d.getSeconds()).padStart(2, '0');
+                        }
+                        return y + '-' + m + '-' + day + ' ' + h + ':' + min + ':' + s;
+                    }
+                },
+                { data: 'param_desc', width: "15%" },
+                { data: 'description', width: "20%" },
+                {
+                    data: 'content',
+                    render: function (data) {
+                        try {
+                            let parsed = JSON.parse(data);
+                            return `<div class="json-content">${JSON.stringify(parsed, null, 4)}</div>`;
+                        } catch (e) {
+                            return data;
+                        }
+                    }
+                }
+            ],
+            language: {
+                "processing": "处理中...",
+                "loadingRecords": "载入中...",
+                "lengthMenu": "显示 _MENU_ 项结果",
+                "info": "显示第 _START_ 至 _END_ 项结果，共 _TOTAL_ 项",
+                "infoEmpty": "显示第 0 至 0 项结果，共 0 项",
+                "infoFiltered": "(由 _MAX_ 项结果过滤)",
+                "infoPostFix": "",
+                "search": "搜索:",
+                "emptyTable": "表中数据为空",
+                "zeroRecords": "没有匹配结果",
+                "paginate": {
+                    "first": "首页",
+                    "previous": "上页",
+                    "next": "下页",
+                    "last": "末页"
+                }
+            }
+        });
+
+        loadTableData();
+    }
+
+    function showContentModal(row) {
+        let formattedId = row.config_id.substring(0, 1) + row.config_id.substring(1, 4)  + row.config_id.substring(4, 8);
+        $('#contentModalTitleId').text(formattedId);
+        
+        $('#contentModalCategory').text(row.category);
+        $('#contentModalAbbr').text(row.abbr);
+        $('#contentModalSeq').text(row.seq);
+        
+        let d = new Date(row.updated_at);
+        let y, m, day, h, min, s;
+        if (typeof row.updated_at === 'string' && row.updated_at.indexOf('GMT') !== -1) {
+            y = d.getUTCFullYear(); m = String(d.getUTCMonth() + 1).padStart(2, '0'); day = String(d.getUTCDate()).padStart(2, '0');
+            h = String(d.getUTCHours()).padStart(2, '0'); min = String(d.getUTCMinutes()).padStart(2, '0'); s = String(d.getUTCSeconds()).padStart(2, '0');
+        } else {
+            y = d.getFullYear(); m = String(d.getMonth() + 1).padStart(2, '0'); day = String(d.getDate()).padStart(2, '0');
+            h = String(d.getHours()).padStart(2, '0'); min = String(d.getMinutes()).padStart(2, '0'); s = String(d.getSeconds()).padStart(2, '0');
+        }
+        $('#contentModalUpdated').text(y + '-' + m + '-' + day + ' ' + h + ':' + min + ':' + s);
+        
+        $('#contentModalDesc').text(row.description);
+        $('#contentModalParamDesc').text(row.param_desc || '-');
+        
+        let prettyJson;
+        try {
+            prettyJson = syntaxHighlight(JSON.stringify(JSON.parse(row.content), null, 4));
+        } catch (e) {
+            prettyJson = row.content;
+        }
+        $('#contentModalBody').html(prettyJson);
+        $('#contentModal').modal('show');
+    }
+
+    function loadTableData() {
+        let queryParams = $('#searchForm').serialize();
+        $.get('/api/configs?' + queryParams, function (res) {
+            dtTable.clear().rows.add(res.data).draw();
+            if (res.success) {
+                let datalist = $('#existingConfigsList');
+                datalist.empty();
+                res.data.forEach(item => {
+                    datalist.append(`<option value="${item.config_id}">${item.description}</option>`);
+                });
+            }
+        });
+    }
+
+    function showAddModal() {
+        $('#configModalTitle').text('添加配置项');
+        $('#editMode').val('0');
+        $('#configForm')[0].reset();
+        $('#configCategory, #configAbbr, #configSeq').prop('disabled', false);
+        $('#configModal').modal('show');
+    }
+
+    function showCopyModal() {
+        $('#copySourceInput').val('');
+        $('#copyConfigModal').modal('show');
+    }
+
+    function executeCopy() {
+        let val = $('#copySourceInput').val().trim();
+        if (!val) {
+            alert('请先选择或输入一个有效配置编号！');
+            return;
+        }
+
+        let rows = dtTable.rows().data().toArray();
+        let sourceConfig = rows.find(r => r.config_id === val);
+        
+        if (!sourceConfig) {
+            alert('未能在当前列表中找到编号为 [' + val + '] 的配置项数据！');
+            return;
+        }
+
+        $('#copyConfigModal').modal('hide');
+        
+        $('#editMode').val('0'); 
+        $('#configModalTitle').text('复制并新建配置项');
+        $('#configForm')[0].reset();
+        
+        $('#configCategory').val('');
+        $('#configAbbr').val('');
+        $('#configSeq').val('');
+        $('#configCategory, #configAbbr, #configSeq').prop('disabled', false);
+
+        $('#configDesc').val(sourceConfig.description);
+        $('#configParamDesc').val(sourceConfig.param_desc);
+        
+        try {
+            $('#configContent').val(JSON.stringify(JSON.parse(sourceConfig.content), null, 4));
+        } catch (e) {
+            $('#configContent').val(sourceConfig.content);
+        }
+        
+        $('#configModal').modal('show');
+    }
+
+    function showEditModal(row) {
+        $('#configModalTitle').text('修改配置项 - ' + row.config_id);
+        $('#editMode').val(row.config_id);
+
+        $('#configCategory').val(row.category).prop('disabled', true);
+        $('#configAbbr').val(row.abbr).prop('disabled', true);
+        $('#configSeq').val(row.seq).prop('disabled', true);
+
+        $('#configDesc').val(row.description);
+        $('#configParamDesc').val(row.param_desc);
+
+        try {
+            $('#configContent').val(JSON.stringify(JSON.parse(row.content), null, 4));
+        } catch (e) {
+            $('#configContent').val(row.content);
+        }
+
+        $('#configModal').modal('show');
+    }
+
+    function updateToRedis() {
+        const btn = $('button:contains("Redis 连通测试")');
+        const originalHtml = btn.html();
+        btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> 读取中...');
+
+        $.ajax({
+            url: '/api/redis/get_config',
+            type: 'GET',
+            success: function (res) {
+                btn.prop('disabled', false).html(originalHtml);
+                if (res.success) {
+                    currentRedisConfig = res.data;
+                    let host = currentRedisConfig.host || '127.0.0.1';
+                    let port = currentRedisConfig.port || 6379;
+                    let db = currentRedisConfig.db || 0;
+                    let connString = `redis://${host}:${port}/${db}`;
+                    
+                    $('#redisConnectionString').text(connString);
+                    $('#redisTestResult').empty();
+                    $('#btnTestRedis').prop('disabled', false).html('<i class="fas fa-plug me-1"></i>连接测试');
+                    $('#redisConnectionModal').modal('show');
+                } else {
+                    alert(res.msg);
+                }
+            },
+            error: function (err) {
+                btn.prop('disabled', false).html(originalHtml);
+                alert(err.responseJSON ? err.responseJSON.msg : "获取 Redis 配置失败！");
+            }
+        });
+    }
+
+    function syncAllToRedis() {
+        if (!confirm('确定要将所有配置同步到 Redis 服务器吗？')) return;
+        
+        const btn = $('button:contains("更新所有到Redis")');
+        const originalHtml = btn.html();
+        btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> 同步中...');
+
+        $.ajax({
+            url: '/api/redis/sync_all',
+            type: 'POST',
+            success: function (res) {
+                btn.prop('disabled', false).html(originalHtml);
+                if (res.success) {
+                    alert(res.msg);
+                } else {
+                    alert(res.msg);
+                }
+            },
+            error: function (err) {
+                btn.prop('disabled', false).html(originalHtml);
+                alert(err.responseJSON ? err.responseJSON.msg : "同步失败！");
+            }
+        });
+    }
+
+    function saveConfig() {
+        const editMode = $('#editMode').val();
+        const cat = $('#configCategory').val().toUpperCase();
+        const abbr = $('#configAbbr').val();
+        const seq = $('#configSeq').val();
+        const desc = $('#configDesc').val();
+        const paramDesc = $('#configParamDesc').val();
+        const content = $('#configContent').val();
+
+        if (!desc || !paramDesc || !content) {
+            alert("各项说明和内容均必填！");
+            return;
+        }
+
+        let url = '/api/config';
+        let method = 'POST';
+        let payload = {
+            description: desc,
+            param_desc: paramDesc,
+            content: content
+        };
+
+        if (editMode === '0') {
+            if (!cat || !abbr || !seq) {
+                alert("编号各段必填！");
+                return;
+            }
+            let config_id = cat + abbr + seq;
+            if (config_id.length !== 8) {
+                alert("编号拼接后必须是8位！");
+                return;
+            }
+            payload.config_id = config_id;
+        } else {
+            url = '/api/config/' + editMode;
+            method = 'PUT';
+        }
+
+        $.ajax({
+            url: url,
+            type: method,
+            contentType: 'application/json',
+            data: JSON.stringify(payload),
+            success: function (res) {
+                if (res.success) {
+                    $('#configModal').modal('hide');
+                    loadTableData();
+                } else {
+                    alert(res.msg);
+                }
+            },
+            error: function (err) {
+                alert(err.responseJSON ? err.responseJSON.msg : "保存失败");
+            }
+        });
+    }
+
+    function deleteConfig(config_id) {
+        if (confirm('确定要删除配置项 ' + config_id + ' 吗？')) {
+            $.ajax({
+                url: '/api/config/' + config_id,
+                type: 'DELETE',
+                success: function (res) {
+                    if (res.success) {
+                        loadTableData();
+                    } else {
+                        alert(res.msg);
+                    }
+                }
+            });
+        }
+    }
+
+    function showHistory(config_id) {
+        $('#historyConfigId').text(config_id);
+        $.get('/api/config/' + config_id + '/history', function (res) {
+            dtHistory.clear().rows.add(res.data).draw();
+            $('#historyModal').modal('show');
+        });
+    }
+    function updateToMysql() {
+        const btn = $('button:contains("MySQL 连通测试")');
+        const originalHtml = btn.html();
+        btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> 读取中...');
+
+        $.ajax({
+            url: '/api/mysql/get_config',
+            type: 'GET',
+            success: function (res) {
+                btn.prop('disabled', false).html(originalHtml);
+                if (res.success) {
+                    currentMysqlConfig = res.data;
+                    let host = currentMysqlConfig.host || '127.0.0.1';
+                    let port = currentMysqlConfig.port || 3306;
+                    let user = currentMysqlConfig.user || 'root';
+                    let database = currentMysqlConfig.database || '';
+                    let pass = currentMysqlConfig.password ? '******' : '';
+                    let connString = `mysql+pymysql://${user}:${pass}@${host}:${port}/${database}`;
+                    
+                    $('#mysqlConnectionString').text(connString);
+                    $('#mysqlTestResult').empty();
+                    $('#btnTestMysql').prop('disabled', false).html('<i class="fas fa-plug me-1"></i>连接测试');
+                    $('#mysqlConnectionModal').modal('show');
+                } else {
+                    alert(res.msg);
+                }
+            },
+            error: function (err) {
+                btn.prop('disabled', false).html(originalHtml);
+                alert(err.responseJSON ? err.responseJSON.msg : "获取 MySQL 配置失败！");
+            }
+        });
+    }
+
+    function testPgsqlPool() {
+        const btn = $('button:contains("PgSQL Pool 连通测试")');
+        const originalHtml = btn.html();
+        btn.prop('disabled', true).html('<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> 读取中...');
+
+        $.ajax({
+            url: '/api/pgsql/pool_list',
+            type: 'GET',
+            success: function (res) {
+                btn.prop('disabled', false).html(originalHtml);
+                if (res.success) {
+                    let tbody = $('#pgsqlPoolTableBody');
+                    tbody.empty();
+                    $('#pgsqlPoolResult').empty();
+                    
+                    res.data.forEach(item => {
+                        let row = $('<tr></tr>');
+                        row.append(`<td><strong>${item.config_id}</strong></td>`);
+                        row.append(`<td>${item.description || '-'}</td>`);
+                        
+                        if (item.is_valid && item.config_data) {
+                            row.append(`<td><span class="badge bg-success">有效</span></td>`);
+                            
+                            let host = item.config_data.host || '127.0.0.1';
+                            let port = item.config_data.port || 5432;
+                            let user = item.config_data.user || 'postgres';
+                            let database = item.config_data.database || '';
+                            let pass = item.config_data.password ? '******' : '';
+                            let connString = `postgresql://${user}:${pass}@${host}:${port}/${database}`;
+                            
+                            row.append(`<td><code class="text-dark bg-light p-1 rounded" style="word-break: break-all;">${connString}</code></td>`);
+                            
+                            let ds = JSON.stringify(item.config_data).replace(/"/g, '&quot;');
+                            
+                            row.append(`<td style="width: 120px;">
+                                <button class="btn btn-sm btn-primary w-100 mb-1" onclick="doPgsqlTest(this)" data-config="${ds}">
+                                    <i class="fas fa-plug me-1"></i>测试
+                                </button>
+                                <div class="small result-msg text-center"></div>
+                            </td>`);
+                            
+                        } else {
+                            row.append(`<td><span class="badge bg-secondary">无效配置项</span></td>`);
+                            row.append(`<td class="text-muted">-</td>`);
+                            row.append(`<td>-</td>`);
+                        }
+                        
+                        tbody.append(row);
+                    });
+                    
+                    $('#pgsqlConnectionModal').modal('show');
+                } else {
+                    alert(res.msg);
+                }
+            },
+            error: function (err) {
+                btn.prop('disabled', false).html(originalHtml);
+                alert(err.responseJSON ? err.responseJSON.msg : "由于缺失合法配置或网络原因加载失败！");
+            }
+        });
+    }
+
+    function doPgsqlTest(btnElem) {
+        let btn = $(btnElem);
+        let td = btn.parent();
+        let resultDiv = td.find('.result-msg');
+        let configDataStr = btn.attr('data-config');
+        if (!configDataStr) return;
+        
+        let configData = JSON.parse(configDataStr.replace(/&quot;/g, '"'));
+        
+        btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i>');
+        resultDiv.html('<span class="text-info"><i class="fas fa-spinner fa-spin"></i> 连接中</span>');
+        
+        $.ajax({
+            url: '/api/pgsql/test_connection',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify(configData),
+            success: function (res) {
+                btn.prop('disabled', false).html('<i class="fas fa-plug me-1"></i>重新测试');
+                if (res.success) {
+                    resultDiv.html(`<span class="text-success fw-bold"><i class="fas fa-check-circle"></i> 成功</span>`);
+                } else {
+                    resultDiv.html(`<span class="text-danger" title="${res.msg}"><i class="fas fa-times-circle"></i> 失败</span>`);
+                    alert(res.msg);
+                }
+            },
+            error: function (err) {
+                btn.prop('disabled', false).html('<i class="fas fa-plug me-1"></i>重新测试');
+                let msg = err.responseJSON ? err.responseJSON.msg : "请求抛出异常";
+                resultDiv.html(`<span class="text-danger" title="${msg}"><i class="fas fa-times-circle"></i> 异常</span>`);
+                alert(msg);
+            }
+        });
+    }
+    function singleSyncToRedis(config_id) {
+        if (!confirm('确定要将配置项 ' + config_id + ' 刷新更新到 Redis 吗？')) {
+            return;
+        }
+        
+        // Show lightweight loading indicator if preferred, currently omitting blocking alert.
+        $.ajax({
+            url: '/api/redis/sync_single/' + config_id,
+            type: 'POST',
+            success: function (res) {
+                if (res.success) {
+                    alert('操作成功: ' + res.msg);
+                } else {
+                    alert('更新失败: ' + res.msg);
+                }
+            },
+            error: function (err) {
+                alert(err.responseJSON ? err.responseJSON.msg : "单独同步调用失败，请检查网络或后端日志。");
+            }
+        });
+    }
+
+</script>
+{% endblock %}

@@ -1,2 +1,4 @@
 Flask
 pymysql
+redis
+psycopg2-binary

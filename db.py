@@ -1,57 +1,46 @@
-import json
 import os
-import pymysql
+import sqlite3
 import datetime
 
-CONFIG_FILE = 'nex.json'
+DB_FILE = 'nexus.db'
 
 def get_connection():
-    if not os.path.exists(CONFIG_FILE):
-        return None
-    with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        config = data.get('MySqlConfig', {})
-    
-    return pymysql.connect(
-        host=config.get('Server', 'localhost'),
-        user=config.get('Uid', 'root'),
-        password=config.get('Pwd', ''),
-        database=config.get('Database', 'Nexus'),
-        charset='utf8mb4',
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=True
-    )
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     conn = get_connection()
-    if not conn:
-        print("Could not connect to Database. Check nex.json.")
-        return
     try:
-        with conn.cursor() as cursor:
-            # Create main config table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS config_items (
-                    config_id VARCHAR(8) PRIMARY KEY,
-                    category VARCHAR(1) NOT NULL,
-                    abbr VARCHAR(3) NOT NULL,
-                    seq VARCHAR(4) NOT NULL,
-                    description LONGTEXT,
-                    content LONGTEXT,
-                    updated_at DATETIME NOT NULL,
-                    is_deleted TINYINT(1) DEFAULT 0
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """)
-            # Create config history table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS config_history (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    config_id VARCHAR(8) NOT NULL,
-                    description LONGTEXT,
-                    content LONGTEXT,
-                    updated_at DATETIME NOT NULL
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """)
+        cursor = conn.cursor()
+        # Create main config table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS config_items (
+                config_id VARCHAR(8) PRIMARY KEY,
+                category VARCHAR(1) NOT NULL,
+                abbr VARCHAR(3) NOT NULL,
+                seq VARCHAR(4) NOT NULL,
+                description TEXT,
+                param_desc TEXT,
+                content TEXT,
+                updated_at DATETIME NOT NULL,
+                is_deleted INTEGER DEFAULT 0
+            );
+        """)
+        # Create config history table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS config_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                config_id VARCHAR(8) NOT NULL,
+                description TEXT,
+                param_desc TEXT,
+                content TEXT,
+                updated_at DATETIME NOT NULL
+            );
+        """)
+        conn.commit()
+    except Exception as e:
+        print(f"Error initializing db: {e}")
     finally:
         conn.close()
 
@@ -63,29 +52,29 @@ def get_configs(filters=None):
     params = []
     
     if 'config_id' in filters and filters['config_id']:
-        query += " AND config_id LIKE %s"
+        query += " AND config_id LIKE ?"
         params.append(f"%{filters['config_id']}%")
     if 'category' in filters and filters['category']:
-        query += " AND category = %s"
+        query += " AND category = ?"
         params.append(filters['category'])
     if 'abbr' in filters and filters['abbr']:
-        query += " AND abbr = %s"
+        query += " AND abbr = ?"
         params.append(filters['abbr'])
     if 'seq' in filters and filters['seq']:
-        query += " AND seq = %s"
+        query += " AND seq = ?"
         params.append(filters['seq'])
     
     if 'keyword' in filters and filters['keyword']:
         kw = f"%{filters['keyword']}%"
-        query += " AND (description LIKE %s OR content LIKE %s)"
+        query += " AND (description LIKE ? OR content LIKE ?)"
         params.extend([kw, kw])
         
     if 'update_time_start' in filters and filters['update_time_start']:
-        query += " AND updated_at >= %s"
+        query += " AND updated_at >= ?"
         params.append(filters['update_time_start'] + " 00:00:00")
         
     if 'update_time_end' in filters and filters['update_time_end']:
-        query += " AND updated_at <= %s"
+        query += " AND updated_at <= ?"
         params.append(filters['update_time_end'] + " 23:59:59")
         
     query += " ORDER BY updated_at DESC"
@@ -93,9 +82,9 @@ def get_configs(filters=None):
     conn = get_connection()
     if not conn: return []
     try:
-        with conn.cursor() as cursor:
-            cursor.execute(query, params)
-            return cursor.fetchall()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
 
@@ -103,27 +92,29 @@ def get_config_by_id(config_id):
     conn = get_connection()
     if not conn: return None
     try:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT * FROM config_items WHERE config_id = %s AND is_deleted = 0", (config_id,))
-            return cursor.fetchone()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM config_items WHERE config_id = ? AND is_deleted = 0", (config_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
     finally:
         conn.close()
 
-def add_config(config_id, category, abbr, seq, description, content):
+def add_config(config_id, category, abbr, seq, description, param_desc, content):
     conn = get_connection()
     if not conn: return False
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                INSERT INTO config_items (config_id, category, abbr, seq, description, content, updated_at, is_deleted)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 0)
-            """, (config_id, category, abbr, seq, description, content, now))
-            
-            cursor.execute("""
-                INSERT INTO config_history (config_id, description, content, updated_at)
-                VALUES (%s, %s, %s, %s)
-            """, (config_id, description, content, now))
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO config_items (config_id, category, abbr, seq, description, param_desc, content, updated_at, is_deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """, (config_id, category, abbr, seq, description, param_desc, content, now))
+        
+        cursor.execute("""
+            INSERT INTO config_history (config_id, description, param_desc, content, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (config_id, description, param_desc, content, now))
+        conn.commit()
         return True
     except Exception as e:
         print(f"Error adding config: {e}")
@@ -131,22 +122,23 @@ def add_config(config_id, category, abbr, seq, description, content):
     finally:
         conn.close()
 
-def update_config(config_id, description, content):
+def update_config(config_id, description, param_desc, content):
     conn = get_connection()
     if not conn: return False
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE config_items 
-                SET description = %s, content = %s, updated_at = %s
-                WHERE config_id = %s AND is_deleted = 0
-            """, (description, content, now, config_id))
-            
-            cursor.execute("""
-                INSERT INTO config_history (config_id, description, content, updated_at)
-                VALUES (%s, %s, %s, %s)
-            """, (config_id, description, content, now))
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE config_items 
+            SET description = ?, param_desc = ?, content = ?, updated_at = ?
+            WHERE config_id = ? AND is_deleted = 0
+        """, (description, param_desc, content, now, config_id))
+        
+        cursor.execute("""
+            INSERT INTO config_history (config_id, description, param_desc, content, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (config_id, description, param_desc, content, now))
+        conn.commit()
         return True
     except Exception as e:
         print(f"Error updating config: {e}")
@@ -159,12 +151,13 @@ def delete_config(config_id):
     if not conn: return False
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                UPDATE config_items 
-                SET is_deleted = 1, updated_at = %s
-                WHERE config_id = %s
-            """, (now, config_id))
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE config_items 
+            SET is_deleted = 1, updated_at = ?
+            WHERE config_id = ?
+        """, (now, config_id))
+        conn.commit()
         return True
     except Exception as e:
         print(f"Error deleting config: {e}")
@@ -176,12 +169,12 @@ def get_history(config_id):
     conn = get_connection()
     if not conn: return []
     try:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT * FROM config_history 
-                WHERE config_id = %s 
-                ORDER BY updated_at DESC
-            """, (config_id,))
-            return cursor.fetchall()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM config_history 
+            WHERE config_id = ? 
+            ORDER BY updated_at DESC
+        """, (config_id,))
+        return [dict(row) for row in cursor.fetchall()]
     finally:
         conn.close()
